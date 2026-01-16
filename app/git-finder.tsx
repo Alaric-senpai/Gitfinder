@@ -1,13 +1,12 @@
 "use client"
 
 import type React from "react"
-
 import { Octokit } from "octokit"
 import { useState, useEffect } from "react"
-import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
+import { motion, AnimatePresence } from "framer-motion"
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -15,452 +14,425 @@ import {
   Search,
   GitBranch,
   Star,
-  AlertCircle,
-  ExternalLink,
+  GitCommit,
   MapPin,
-  Building,
+  Link as LinkIcon,
+  Twitter,
+  Users,
+  BookOpen,
   Calendar,
-  ArrowLeft,
-  Loader2,
+  ArrowUpRight,
+  Code,
+  Activity,
+  Layers,
+  Terminal,
 } from "lucide-react"
-import { cn } from "@/lib/utils"
 import { formatDistanceToNow } from "date-fns"
 
+// --- Types ---
+
+interface UserProfile {
+  login: string
+  name: string
+  avatar_url: string
+  html_url: string
+  bio: string
+  location: string
+  company: string
+  blog: string
+  twitter_username: string
+  public_repos: number
+  followers: number
+  following: number
+  created_at: string
+}
+
+interface Repository {
+  id: number
+  name: string
+  description: string
+  html_url: string
+  stargazers_count: number
+  forks_count: number
+  language: string
+  updated_at: string
+  topics: string[]
+}
+
+interface ActivityEvent {
+  id: string
+  type: string
+  repo: {
+    name: string
+  }
+  created_at: string
+  payload: any
+}
+
+// --- Component ---
+
 export default function GitFinder() {
-  const [octokit, setOctokit] = useState<any>(null)
-  const [searchQuery, setSearchQuery] = useState<string>("")
-  const [user, setUser] = useState<any>(null)
-  const [repos, setRepos] = useState<any[]>([])
-  const [issues, setIssues] = useState<any[]>([])
-  const [error, setError] = useState<string | null>(null)
-  const [showDetails, setShowDetails] = useState(false)
+  const [octokit, setOctokit] = useState<Octokit | null>(null)
+  const [searchQuery, setSearchQuery] = useState("")
   const [loading, setLoading] = useState(false)
-  const [reposLoading, setReposLoading] = useState(false)
-  const [issuesLoading, setIssuesLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // Data States
+  const [user, setUser] = useState<UserProfile | null>(null)
+  const [repos, setRepos] = useState<Repository[]>([])
+  const [activities, setActivities] = useState<ActivityEvent[]>([])
+  const [languages, setLanguages] = useState<Record<string, number>>({})
 
   useEffect(() => {
-    // Initialize Octokit once when component mounts
     setOctokit(new Octokit())
   }, [])
 
-  // Reset all state
-  const resetPage = () => {
-    setUser(null)
-    setRepos([])
-    setIssues([])
-    setError(null)
-    setShowDetails(false)
-  }
-
-  // Handle input change
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setSearchQuery(e.target.value)
-  }
-
-  // Handle form submit
-  const handleForm = async (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault()
-
-    if (!searchQuery.trim()) return
+    if (!searchQuery.trim() || !octokit) return
 
     setLoading(true)
+    setError(null)
+    setUser(null)
+    setRepos([])
+    setActivities([])
+    setLanguages({})
+
     try {
-      resetPage()
-      const { data } = await octokit.rest.users.getByUsername({ username: searchQuery })
-      setUser(data)
+      // 1. Fetch User
+      const userRes = await octokit.rest.users.getByUsername({ username: searchQuery })
+      setUser(userRes.data as any)
+
+      // 2. Fetch Repos (for stats & list)
+      const reposRes = await octokit.rest.repos.listForUser({
+        username: searchQuery,
+        sort: "updated",
+        per_page: 100, // Get more for better stats
+      })
+      const fetchedRepos = reposRes.data as any[]
+      setRepos(fetchedRepos)
+
+      // Calculate Languages
+      const langStats: Record<string, number> = {}
+      fetchedRepos.forEach((repo) => {
+        if (repo.language) {
+          langStats[repo.language] = (langStats[repo.language] || 0) + 1
+        }
+      })
+      setLanguages(langStats)
+
+      // 3. Fetch Recent Activity
+      try {
+        const activityRes = await octokit.rest.activity.listPublicEventsForUser({
+          username: searchQuery,
+          per_page: 10,
+        })
+        setActivities(activityRes.data as any[])
+      } catch (err) {
+        console.warn("Could not fetch activity", err)
+      }
+
     } catch (err: any) {
-      setError(err.status === 404 ? "User not found!" : "An error occurred. Please try again.")
+      if (err.status === 404) {
+        setError("User not found")
+      } else {
+        setError("Something went wrong. Please try again.")
+      }
     } finally {
       setLoading(false)
     }
   }
 
-  // Fetch Repositories
-  const fetchRepos = async () => {
-    if (!user) return
+  // Calculate top languages for display
+  const topLanguages = Object.entries(languages)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 5)
 
-    setReposLoading(true)
-    try {
-      const { data } = await octokit.rest.repos.listForUser({
-        username: user.login,
-        per_page: 15,
-        sort: "updated",
-        direction: "desc",
-      })
-      setRepos(data)
-    } catch (err) {
-      console.error("Error fetching repositories:", err)
-    } finally {
-      setReposLoading(false)
-    }
-  }
-
-  // Fetch Issues
-  const fetchIssues = async () => {
-    if (!user) return
-
-    setIssuesLoading(true)
-    try {
-      const { data } = await octokit.rest.search.issuesAndPullRequests({
-        q: `author:${user.login} type:issue state:open`,
-        per_page: 5,
-      })
-      setIssues(data.items)
-    } catch (err) {
-      console.error("Error fetching issues:", err)
-    } finally {
-      setIssuesLoading(false)
-    }
-  }
+  // Calculate total stars
+  const totalStars = repos.reduce((acc, repo) => acc + repo.stargazers_count, 0)
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-950 to-gray-900 text-white p-4 md:p-8">
-      <div
-        className={cn(
-          "max-w-7xl mx-auto grid gap-6 transition-all duration-300",
-          showDetails ? "grid-cols-1 lg:grid-cols-[1fr_1.5fr]" : "grid-cols-1",
-        )}
-      >
-        {/* Left Side: Search & User Info */}
-        <div className="flex flex-col items-center">
-          <div className="w-full max-w-md">
-            <h1 className="font-bold text-4xl md:text-6xl my-7 flex items-center gap-2 justify-center">
-              <span className="bg-emerald-500/20 p-3 rounded-md text-emerald-400">GIT</span>
-              <span>Finder</span>
-            </h1>
-
-            <Card className="bg-gray-800/50 border-gray-700 shadow-xl backdrop-blur-sm">
-              <CardContent className="pt-6">
-                <form onSubmit={handleForm} className="flex gap-2">
-                  <div className="relative flex-1">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 h-4 w-4" />
-                    <Input
-                      name="query"
-                      value={searchQuery}
-                      onChange={handleChange}
-                      className="pl-9 bg-gray-900/70 border-gray-700 text-white placeholder:text-gray-500 focus-visible:ring-emerald-500/50"
-                      placeholder="Enter GitHub username"
-                    />
-                  </div>
-                  <Button type="submit" className="bg-emerald-600 hover:bg-emerald-700 text-white" disabled={loading}>
-                    {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Search"}
-                  </Button>
-                </form>
-              </CardContent>
-            </Card>
-
-            {error && (
-              <Card className="mt-4 bg-red-900/20 border-red-800 text-red-300">
-                <CardContent className="flex items-center gap-2 p-4">
-                  <AlertCircle className="h-5 w-5" />
-                  <p>{error}</p>
-                </CardContent>
-              </Card>
-            )}
-
-            {user && !showDetails && (
-              <Card className="mt-6 bg-gray-800/50 border-gray-700 shadow-xl overflow-hidden backdrop-blur-sm">
-                <CardContent className="pt-6 flex flex-col items-center">
-                  <Avatar className="h-24 w-24 border-2 border-emerald-500/30">
-                    <AvatarImage src={user.avatar_url} alt={user.login} />
-                    <AvatarFallback className="bg-emerald-900 text-emerald-200 text-xl">
-                      {user.login.substring(0, 2).toUpperCase()}
-                    </AvatarFallback>
-                  </Avatar>
-
-                  <h2 className="text-2xl font-semibold mt-4">{user.name || user.login}</h2>
-                  <a
-                    href={user.html_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-emerald-400 text-sm flex items-center gap-1 mt-1 hover:underline"
-                  >
-                    @{user.login} <ExternalLink className="h-3 w-3" />
-                  </a>
-
-                  {user.bio && <p className="text-gray-300 text-center mt-3 text-sm">{user.bio}</p>}
-
-                  <div className="flex gap-4 mt-4 text-sm">
-                    <div className="text-center">
-                      <p className="font-bold">{user.followers.toLocaleString()}</p>
-                      <p className="text-gray-400">Followers</p>
-                    </div>
-                    <div className="text-center">
-                      <p className="font-bold">{user.following.toLocaleString()}</p>
-                      <p className="text-gray-400">Following</p>
-                    </div>
-                    <div className="text-center">
-                      <p className="font-bold">{user.public_repos.toLocaleString()}</p>
-                      <p className="text-gray-400">Repos</p>
-                    </div>
-                  </div>
-
-                  <Button
-                    onClick={() => setShowDetails(true)}
-                    className="mt-6 bg-emerald-600 hover:bg-emerald-700 text-white w-full"
-                  >
-                    View Full Profile
-                  </Button>
-                </CardContent>
-              </Card>
-            )}
+    <div className="w-full min-h-screen bg-gradient-to-br from-background via-background to-secondary/30 text-foreground font-sans selection:bg-primary/20">
+      <div className="container mx-auto px-4 py-8 max-w-6xl">
+        
+        {/* Header / Search Section */}
+        <motion.div 
+          layout
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className={`flex flex-col items-center justify-center transition-all duration-500 ease-in-out ${user ? 'py-4' : 'h-[80vh]'}`}
+        >
+          <div className="text-center mb-8 relative">
+            <motion.div 
+              layoutId="logo"
+              className="flex items-center justify-center gap-3 mb-2"
+            >
+              <div className="p-3 rounded-xl bg-primary/10 border border-primary/20 shadow-[0_0_15px_-3px_var(--primary)]">
+                <Terminal className="w-8 h-8 text-primary" />
+              </div>
+              <h1 className="text-4xl md:text-5xl font-bold tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-primary via-primary/80 to-primary/50">
+                GitFinder
+              </h1>
+            </motion.div>
+            <p className="text-muted-foreground text-sm font-light tracking-widest uppercase">
+              Advanced GitHub Intelligence
+            </p>
           </div>
-        </div>
 
-        {/* Right Side: Detailed Profile */}
-        {showDetails && user && (
-          <div className="w-full">
-            <Card className="bg-gray-800/50 border-gray-700 shadow-xl backdrop-blur-sm">
-              <CardHeader className="flex flex-row items-center gap-4 pb-2">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => setShowDetails(false)}
-                  className="h-8 w-8 text-gray-400 hover:text-white hover:bg-gray-700"
-                >
-                  <ArrowLeft className="h-4 w-4" />
+          <Card className="w-full max-w-lg bg-card/90 backdrop-blur-xl border-border shadow-xl">
+            <CardContent className="p-2">
+              <form onSubmit={handleSearch} className="flex gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input 
+                    placeholder="Search username..." 
+                    className="pl-9 bg-transparent border-transparent focus-visible:ring-0 shadow-none h-11 text-lg"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+                </div>
+                <Button size="lg" type="submit" disabled={loading} className="rounded-lg shadow-lg shadow-primary/20">
+                  {loading ? <Activity className="w-4 h-4 animate-spin" /> : "Analyze"}
                 </Button>
-                <CardTitle className="text-xl text-emerald-400">GitHub Profile</CardTitle>
-              </CardHeader>
+              </form>
+            </CardContent>
+          </Card>
 
-              <Tabs defaultValue="profile" className="w-full">
-                <CardContent className="pb-0">
-                  <TabsList className="w-full bg-gray-900/70 p-1">
-                    <TabsTrigger value="profile" className="data-[state=active]:bg-emerald-600">
-                      Profile
-                    </TabsTrigger>
-                    <TabsTrigger value="repos" onClick={fetchRepos} className="data-[state=active]:bg-emerald-600">
-                      Repositories
-                    </TabsTrigger>
-                    <TabsTrigger value="issues" onClick={fetchIssues} className="data-[state=active]:bg-emerald-600">
-                      Issues
-                    </TabsTrigger>
-                  </TabsList>
-                </CardContent>
+          {error && (
+            <motion.div 
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mt-4 text-destructive bg-destructive/10 px-4 py-2 rounded-lg border border-destructive/20"
+            >
+              {error}
+            </motion.div>
+          )}
+        </motion.div>
 
-                <CardContent className="pt-6">
-                  {/* Profile Tab */}
-                  <TabsContent value="profile" className="mt-0">
-                    <div className="flex flex-col md:flex-row gap-6 items-center md:items-start">
-                      <Avatar className="h-32 w-32 border-2 border-emerald-500/30">
-                        <AvatarImage src={user.avatar_url} alt={user.login} />
-                        <AvatarFallback className="bg-emerald-900 text-emerald-200 text-3xl">
-                          {user.login.substring(0, 2).toUpperCase()}
-                        </AvatarFallback>
-                      </Avatar>
+        {/* Dashboard Content */}
+        <AnimatePresence mode="wait">
+          {user && !loading && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 20 }}
+              className="grid grid-cols-1 md:grid-cols-12 gap-6"
+            >
+              {/* Left Column: Profile Card & Stats */}
+              <div className="md:col-span-4 space-y-6 md:sticky md:top-6 md:h-fit md:max-h-[calc(100vh-3rem)] md:overflow-y-auto custom-scrollbar pr-1">
+                <Card className="overflow-hidden border-border bg-card/85 backdrop-blur-md shadow-md">
+                  <div className="h-32 bg-gradient-to-b from-primary/20 to-transparent relative">
+                    <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
+                  </div>
+                  <CardContent className="px-6 pb-6 relative">
+                    <Avatar className="w-24 h-24 border-4 border-card absolute -top-12 shadow-xl">
+                      <AvatarImage src={user.avatar_url} />
+                      <AvatarFallback>{user.login.slice(0, 2).toUpperCase()}</AvatarFallback>
+                    </Avatar>
+                    
+                    <div className="mt-14 mb-6">
+                      <h2 className="text-2xl font-bold">{user.name}</h2>
+                      <a href={user.html_url} target="_blank" rel="noreferrer" className="text-primary hover:underline text-sm font-mono flex items-center gap-1">
+                        @{user.login} <ArrowUpRight className="w-3 h-3" />
+                      </a>
+                      <p className="mt-4 text-muted-foreground leading-relaxed text-sm">
+                        {user.bio || "No bio available."}
+                      </p>
+                    </div>
 
-                      <div className="flex-1 space-y-4">
-                        <div className="text-center md:text-left">
-                          <h2 className="text-3xl font-bold text-emerald-300">{user.name || user.login}</h2>
-                          <a
-                            href={user.html_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-emerald-400 flex items-center gap-1 mt-1 hover:underline justify-center md:justify-start"
-                          >
-                            @{user.login} <ExternalLink className="h-3 w-3" />
+                    <div className="grid grid-cols-3 gap-2 mb-6 text-center">
+                      <div className="p-3 rounded-lg bg-secondary/80 border border-border/50">
+                        <div className="text-xl font-bold text-primary">{user.followers}</div>
+                        <div className="text-[10px] uppercase text-muted-foreground font-semibold">Followers</div>
+                      </div>
+                      <div className="p-3 rounded-lg bg-secondary/80 border border-border/50">
+                        <div className="text-xl font-bold text-primary">{user.following}</div>
+                        <div className="text-[10px] uppercase text-muted-foreground font-semibold">Following</div>
+                      </div>
+                      <div className="p-3 rounded-lg bg-secondary/80 border border-border/50">
+                        <div className="text-xl font-bold text-primary">{user.public_repos}</div>
+                        <div className="text-[10px] uppercase text-muted-foreground font-semibold">Repos</div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 text-sm text-muted-foreground">
+                      {user.location && (
+                        <div className="flex items-center gap-3">
+                          <MapPin className="w-4 h-4 text-primary/70" /> {user.location}
+                        </div>
+                      )}
+                      {user.blog && (
+                        <div className="flex items-center gap-3">
+                          <LinkIcon className="w-4 h-4 text-primary/70" />
+                          <a href={user.blog.startsWith('http') ? user.blog : `https://${user.blog}`} target="_blank" rel="noreferrer" className="hover:text-primary transition-colors truncate">
+                            {user.blog}
                           </a>
                         </div>
-
-                        {user.bio && <p className="text-gray-300">{user.bio}</p>}
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                          {user.company && (
-                            <div className="flex items-center gap-2 text-gray-300">
-                              <Building className="h-4 w-4 text-gray-400" />
-                              <span>{user.company}</span>
-                            </div>
-                          )}
-
-                          {user.location && (
-                            <div className="flex items-center gap-2 text-gray-300">
-                              <MapPin className="h-4 w-4 text-gray-400" />
-                              <span>{user.location}</span>
-                            </div>
-                          )}
-
-                          {user.created_at && (
-                            <div className="flex items-center gap-2 text-gray-300">
-                              <Calendar className="h-4 w-4 text-gray-400" />
-                              <span>Joined {new Date(user.created_at).toLocaleDateString()}</span>
-                            </div>
-                          )}
+                      )}
+                      {user.twitter_username && (
+                        <div className="flex items-center gap-3">
+                          <Twitter className="w-4 h-4 text-primary/70" /> @{user.twitter_username}
                         </div>
-
-                        <div className="flex flex-wrap gap-4 text-sm">
-                          <div className="bg-gray-900/70 px-3 py-2 rounded-md">
-                            <p className="font-bold text-blue-300 ">{user.followers.toLocaleString()}</p>
-                            <p className="text-gray-400">Followers</p>
-                          </div>
-                          <div className="bg-gray-900/70 px-3 py-2 rounded-md">
-                            <p className="font-bold text-blue-300">{user.following.toLocaleString()}</p>
-                            <p className="text-gray-400">Following</p>
-                          </div>
-                          <div className="bg-gray-900/70 px-3 py-2 rounded-md">
-                            <p className="font-bold text-blue-300">{user.public_repos.toLocaleString()}</p>
-                            <p className="text-gray-400">Repositories</p>
-                          </div>
-                          <div className="bg-gray-900/70 px-3 py-2 rounded-md">
-                            <p className="font-bold text-blue-300">{user.public_gists.toLocaleString()}</p>
-                            <p className="text-gray-400">Gists</p>
-                          </div>
-                        </div>
+                      )}
+                      <div className="flex items-center gap-3">
+                        <Calendar className="w-4 h-4 text-primary/70" /> Joined {new Date(user.created_at).toLocaleDateString()}
                       </div>
                     </div>
-                  </TabsContent>
+                  </CardContent>
+                </Card>
 
-                  {/* Repositories Tab */}
-                  <TabsContent value="repos" className="mt-0">
-                    <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
-                      <GitBranch className="h-5 w-5 text-emerald-400" />
-                      <span className="text-green-500">
-                        Latest Repositories
-                      </span>
-                    </h3>
-
-                    {reposLoading ? (
-                      <div className="space-y-4">
-                        {[...Array(3)].map((_, i) => (
-                          <div key={i} className="border border-gray-700 rounded-md p-4">
-                            <Skeleton className="h-6 w-48 bg-gray-700" />
-                            <Skeleton className="h-4 w-full mt-2 bg-gray-700" />
-                            <div className="flex gap-3 mt-3">
-                              <Skeleton className="h-5 w-16 bg-gray-700" />
-                              <Skeleton className="h-5 w-16 bg-gray-700" />
-                            </div>
+                {/* Top Languages Chart (Simplified) */}
+                {topLanguages.length > 0 && (
+                  <Card className="border-border bg-card/85 backdrop-blur-md shadow-sm">
+                    <CardHeader>
+                      <CardTitle className="text-lg flex items-center gap-2">
+                        <Code className="w-4 h-4 text-primary" /> Top Languages
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {topLanguages.map(([lang, count]) => (
+                        <div key={lang} className="space-y-1">
+                          <div className="flex justify-between text-xs">
+                            <span>{lang}</span>
+                            <span className="text-muted-foreground">{(count / repos.length * 100).toFixed(0)}%</span>
                           </div>
-                        ))}
-                      </div>
-                    ) : repos.length > 0 ? (
-                      <div className="space-y-4">
-                        {repos.map((repo) => (
-                          <Card key={repo.id} className="bg-gray-900/70 border-gray-700">
-                            <CardContent className="p-4">
-                              <div className="flex justify-between items-start">
-                                <a
-                                  href={repo.html_url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-emerald-400 font-semibold text-lg hover:underline flex items-center gap-1"
-                                >
-                                  {repo.name}
-                                  <ExternalLink className="h-3 w-3" />
-                                </a>
-                                <div className="flex items-center gap-1 text-yellow-400">
-                                  <Star className="h-4 w-4" />
-                                  <span>{repo.stargazers_count}</span>
-                                </div>
-                              </div>
-
-                              {repo.description && <p className="text-gray-300 text-sm mt-2">{repo.description}</p>}
-
-                              <div className="flex flex-wrap gap-2 mt-3">
-                                {repo.language && (
-                                  <Badge variant="outline" className="bg-gray-800 text-white text-xs">
-                                    {repo.language}
-                                  </Badge>
-                                )}
-                                <Badge variant="outline" className="bg-gray-800 text-white text-xs">
-                                  Updated {formatDistanceToNow(new Date(repo.updated_at))} ago
-                                </Badge>
-                              </div>
-                            </CardContent>
-                          </Card>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="text-center py-8 text-gray-400">
-                        <GitBranch className="h-12 w-12 mx-auto mb-3 opacity-20" />
-                        <p>No repositories found</p>
-                      </div>
-                    )}
-
-                    {repos.length > 0 && (
-                      <div className="mt-4 text-center">
-                        <a
-                          href={`https://github.com/${user.login}?tab=repositories`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-emerald-400 hover:underline inline-flex items-center gap-1"
-                        >
-                          View all repositories <ExternalLink className="h-3 w-3" />
-                        </a>
-                      </div>
-                    )}
-                  </TabsContent>
-
-                  {/* Issues Tab */}
-                  <TabsContent value="issues" className="mt-0">
-                    <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
-                      <AlertCircle className="h-5 w-5 text-emerald-400" />
-                      <span className="text-green-500">
-                        Open Issues
-                      </span>
-                    </h3>
-
-                    {issuesLoading ? (
-                      <div className="space-y-4">
-                        {[...Array(3)].map((_, i) => (
-                          <div key={i} className="border border-gray-700 rounded-md p-4">
-                            <Skeleton className="h-6 w-full bg-gray-700" />
-                            <div className="flex gap-3 mt-3">
-                              <Skeleton className="h-5 w-16 bg-gray-700" />
-                              <Skeleton className="h-5 w-24 bg-gray-700" />
-                            </div>
+                          <div className="h-1.5 w-full bg-secondary rounded-full overflow-hidden">
+                            <div 
+                              className="h-full bg-primary/90 rounded-full" 
+                              style={{ width: `${(count / repos.length * 100)}%` }}
+                            />
                           </div>
-                        ))}
+                        </div>
+                      ))}
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+
+              {/* Right Column: Content */}
+              <div className="md:col-span-8 space-y-6">
+                
+                {/* Stats Row */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <StatCard title="Total Stars" value={totalStars} icon={<Star className="w-4 h-4" />} />
+                  <StatCard title="Public Repos" value={repos.length} icon={<Layers className="w-4 h-4" />} />
+                  <StatCard title="Languages" value={Object.keys(languages).length} icon={<Code className="w-4 h-4" />} />
+                  <StatCard title="Years Active" value={new Date().getFullYear() - new Date(user.created_at).getFullYear()} icon={<Calendar className="w-4 h-4" />} />
+                </div>
+
+                {/* Recent Activity */}
+                <Card className="border-border bg-card/85 backdrop-blur-md shadow-sm">
+                   <CardHeader>
+                      <CardTitle className="text-lg flex items-center gap-2">
+                        <Activity className="w-4 h-4 text-primary" /> Recent Activity
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="h-[200px] pr-4 overflow-y-auto custom-scrollbar">
+                        <div className="space-y-4">
+                          {activities.length > 0 ? activities.map((event) => (
+                             <div key={event.id} className="flex gap-4 items-start text-sm">
+                               <div className="mt-1 min-w-[2rem] flex justify-center">
+                                 {getEventIcon(event.type)}
+                               </div>
+                               <div>
+                                 <p className="text-foreground">
+                                   <span className="font-semibold">{formatEventAction(event.type)}</span> in{" "}
+                                   <span className="text-primary font-mono">{event.repo.name}</span>
+                                 </p>
+                                 <p className="text-xs text-muted-foreground">{formatDistanceToNow(new Date(event.created_at))} ago</p>
+                               </div>
+                             </div>
+                          )) : (
+                            <p className="text-muted-foreground text-sm">No recent public activity found.</p>
+                          )}
+                        </div>
                       </div>
-                    ) : issues.length > 0 ? (
-                      <div className="space-y-4">
-                        {issues.map((issue) => (
-                          <Card key={issue.id} className="bg-gray-900/70 border-gray-700">
-                            <CardContent className="p-4">
-                              <a
-                                href={issue.html_url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-emerald-400 font-semibold hover:underline flex items-center gap-1"
-                              >
-                                {issue.title}
-                                <ExternalLink className="h-3 w-3" />
+                    </CardContent>
+                </Card>
+
+                {/* Repositories Grid */}
+                <div>
+                   <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
+                      <BookOpen className="w-5 h-5 text-primary" /> Active Repositories
+                   </h3>
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {repos.slice(0, 6).map((repo) => (
+                        <Card key={repo.id} className="group border-border bg-card/90 hover:bg-card transition-colors backdrop-blur-sm shadow-sm hover:shadow-md">
+                          <CardContent className="p-5">
+                            <div className="flex justify-between items-start mb-2">
+                              <a href={repo.html_url} target="_blank" className="font-semibold text-primary hover:underline truncate pr-4">
+                                {repo.name}
                               </a>
-
-                              <div className="flex flex-wrap gap-2 mt-2 text-sm">
-                                <Badge className="bg-emerald-900/50 text-emerald-300 hover:bg-emerald-900/70">
-                                  #{issue.number}
-                                </Badge>
-                                <span className="text-gray-400">
-                                  Opened {formatDistanceToNow(new Date(issue.created_at))} ago
-                                </span>
+                              <div className="flex items-center gap-1 text-xs text-muted-foreground bg-secondary px-2 py-1 rounded border border-border/50">
+                                <Star className="w-3 h-3 text-yellow-500" /> {repo.stargazers_count}
                               </div>
+                            </div>
+                            <p className="text-sm text-muted-foreground line-clamp-2 h-10 mb-4">
+                              {repo.description || "No description provided."}
+                            </p>
+                            <div className="flex justify-between items-center text-xs text-muted-foreground">
+                               <div className="flex items-center gap-2">
+                                  {repo.language && (
+                                    <span className="flex items-center gap-1">
+                                      <span className="w-2 h-2 rounded-full bg-primary/80"></span>
+                                      {repo.language}
+                                    </span>
+                                  )}
+                               </div>
+                               <span>{new Date(repo.updated_at).toLocaleDateString()}</span>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                   </div>
+                   {repos.length > 6 && (
+                     <div className="mt-4 text-center">
+                       <Button variant="outline" asChild>
+                          <a href={`https://github.com/${user.login}?tab=repositories`} target="_blank">View All on GitHub</a>
+                       </Button>
+                     </div>
+                   )}
+                </div>
 
-                              {issue.repository_url && (
-                                <div className="mt-2 text-sm text-gray-400">
-                                  in repository: {issue.repository_url.split("/").slice(-1)}
-                                </div>
-                              )}
-                            </CardContent>
-                          </Card>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="text-center py-8 text-gray-400">
-                        <AlertCircle className="h-12 w-12 mx-auto mb-3 opacity-20" />
-                        <p>No open issues found</p>
-                      </div>
-                    )}
-                  </TabsContent>
-                </CardContent>
-              </Tabs>
-
-              <CardFooter className="text-xs text-gray-500 justify-center pt-2 pb-4">
-                Data provided by GitHub API • {new Date().toLocaleDateString()}
-              </CardFooter>
-            </Card>
-          </div>
-        )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   )
 }
 
+function StatCard({ title, value, icon }: { title: string, value: string | number, icon: any }) {
+  return (
+    <Card className="bg-card/90 border-border shadow-sm">
+      <CardContent className="p-4 flex flex-col items-center justify-center text-center">
+        <div className="text-muted-foreground mb-2 opacity-50">{icon}</div>
+        <div className="text-2xl font-bold text-primary">{value}</div>
+        <div className="text-xs uppercase text-muted-foreground font-medium tracking-wider">{title}</div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function getEventIcon(type: string) {
+  switch (type) {
+    case "PushEvent": return <GitCommit className="w-4 h-4 text-blue-400" />
+    case "PullRequestEvent": return <GitBranch className="w-4 h-4 text-purple-400" />
+    case "WatchEvent": return <Star className="w-4 h-4 text-yellow-400" />
+    default: return <Activity className="w-4 h-4 text-gray-400" />
+  }
+}
+
+function formatEventAction(type: string) {
+  switch (type) {
+    case "PushEvent": return "Pushed to"
+    case "PullRequestEvent": return "Opened PR in"
+    case "WatchEvent": return "Starred"
+    case "CreateEvent": return "Created"
+    case "ForkEvent": return "Forked"
+    case "IssuesEvent": return "Opened issue in"
+    default: return "Interacted with"
+  }
+}
