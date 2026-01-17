@@ -29,6 +29,7 @@ import {
   Filter,
   FileText
 } from "lucide-react"
+import ReactMarkdown from "react-markdown"
 import { formatDistanceToNow } from "date-fns"
 
 // --- Types ---
@@ -379,10 +380,9 @@ export default function GitFinder() {
                         </CardHeader>
                         <CardContent>
                             <div className="prose prose-invert prose-sm max-w-none text-slate-300 overflow-hidden box-border bg-slate-950/50 p-4 rounded-lg border border-slate-800/50">
-                                <pre className="whitespace-pre-wrap font-mono text-xs overflow-x-auto text-slate-300">
-                                    {readmeContent.slice(0, 1000)}
-                                    {readmeContent.length > 1000 && "\n... (truncated)"}
-                                </pre>
+                                <ReactMarkdown>
+                                   {readmeContent}
+                                </ReactMarkdown>
                             </div>
                         </CardContent>
                     </Card>
@@ -490,7 +490,7 @@ export default function GitFinder() {
 
                    {derivedRepos.length > 6 && (
                      <div className="mt-4 text-center">
-                       <Button variant="outline" asChild className="border-slate-700 text-slate-200 hover:text-white hover:bg-slate-800">
+                       <Button variant="outline" asChild className="border-slate-800 bg-slate-900 text-slate-300 hover:bg-slate-800 hover:text-white transition-all shadow-sm">
                           <a href={`https://github.com/${user.login}?tab=repositories`} target="_blank">View All {derivedRepos.length} Repos on GitHub</a>
                        </Button>
                      </div>

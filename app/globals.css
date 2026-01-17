@@ -183,8 +183,10 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: oklch(0.35 0.05 260);
+  background: oklch(0.271 0.062 281.437 / 0.5); /* muted */
   border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: content-box;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--primary);
